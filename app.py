@@ -42,7 +42,7 @@ class Container(object):
         return IMAGE_CACHE[self.image] != self.repo_image_sha256
 
     def restart(self):
-        p = subprocess.Popen(['/usr/bin/systemctl', 'restart', self.systemd_name], stderr=subprocess.PIPE,
+        p = subprocess.Popen(['systemctl', 'restart', self.systemd_name], stderr=subprocess.PIPE,
                              stdout=subprocess.PIPE, shell=False)
         output = p.communicate()
         if p.returncode != 0:
