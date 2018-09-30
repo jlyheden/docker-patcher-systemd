@@ -28,12 +28,8 @@ class Container(object):
 
         # the actual repo image digest is buried inside an image reference that we have to
         # dig out from the running container image
-        self.repo_image_sha256 = ""
         repo_image = client.images.get(self.image_sha256)
-        for d in repo_image.attrs["RepoDigests"]:
-            if d.startswith("{0}@".format(self.image)):
-                self.repo_image_sha256 = d.split("@")[1]
-                break
+        self.repo_image_sha256 = repo_image.attrs["RepoDigests"][0].split("@")[1]
 
     def should_update(self):
         if not self.auto_update_enabled:
