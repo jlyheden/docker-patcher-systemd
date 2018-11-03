@@ -1,6 +1,6 @@
 # docker-systemd-patcher
 
-![Docker Automated build](https://img.shields.io/docker/automated/jlyheden/docker-patcher-systemd.svg)
+[![Docker Automated build](https://img.shields.io/docker/automated/jlyheden/docker-patcher-systemd.svg)](https://hub.docker.com/r/jlyheden/docker-patcher-systemd/builds/)
 
 A Python thing that will query the docker daemon for running container images and given that auto-update is supported will query remote repo for image updates. Updates are assumed to be handled by systemd via ExecStartPre pulls.
 
