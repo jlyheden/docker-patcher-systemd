@@ -4,7 +4,7 @@
 
 A Python script that connects to the docker daemon to see if there's any running containers where the image tag has been updated and if so triggers a systemd restart of the relevant containers. Works fine for non-critical setups like keeping your home server or hobby projects up to date but if you need something more advanced you should probably check out [watchtower](https://github.com/containrrr/watchtower)
 
-It assumes that containers are handled by systemd, for example running an nginx container like this:
+The script assumes that the container lifecycle is handled by systemd, for example running an nginx container like this:
 
 ```
 $ cat /etc/systemd/system/docker.nginx.service
@@ -28,7 +28,7 @@ ExecStart=/usr/bin/docker run \
 WantedBy=multi-user.target
 ```
 
-Then run like this in a systemd timer:
+And then, to run the patcher script on a cron schedule (below works on Debian 10):
 
 ```
 $ cat /etc/systemd/system/docker.patcher.service
@@ -38,15 +38,16 @@ Requires=docker.patcher.service
 
 [Service]
 Type=oneshot
+ExecStartPre=/usr/bin/docker pull jlyheden/docker-patcher-systemd:latest
 ExecStart=/usr/bin/docker run \
   --rm \
   --name %n \
+  -v /bin/systemctl:/bin/systemctl \
+  -v /run/systemd/system:/run/systemd/system \
+  -v /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket \
+  -v /sys/fs/cgroup:/sys/fs/cgroup \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /var/run/dbus:/var/run/dbus \
-  -v /run/systemd:/run/systemd \
-  -v /usr/bin/systemctl:/usr/bin/systemctl \
-  -v /etc/systemd/system:/etc/systemd/system \
-  jlyheden/docker-patcher-systemd
+  jlyheden/docker-patcher-systemd:latest
 
 $ cat /etc/systemd/system/docker.patcher.timer
 [Unit]
@@ -59,6 +60,6 @@ OnCalendar=Mon *-*-* 5:00:00
 WantedBy=timers.target
 ```
 
-For the containers that you want to be auto updated you must add a label `patcher/auto-update=true`. Default behavior is to ignore the container.
+For all the containers that you want to be auto updated you must add a label `patcher/auto-update=true`. Default behavior is to ignore the container if the label is not set.
 
 The script will assume that the container name matches the systemd service name but this can be overridden by setting the label `patcher/systemd-name=some-name`
