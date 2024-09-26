@@ -17,17 +17,11 @@ class Container(object):
         self.name = attrs["Name"].lstrip("/")
         self.image_sha256 = attrs["Image"]
         self.image = attrs["Config"]["Image"]
+        self.labels = attrs["Config"]["Labels"]
 
-        self.auto_update_enabled = False
-        if "patcher/auto-update" in attrs["Config"]["Labels"]:
-            self.auto_update_enabled = attrs["Config"]["Labels"]["patcher/auto-update"].lower() in ["true"]
+        self.auto_update_enabled = self.labels.get("patcher/auto-update", "false").lower() == "true"
+        self.systemd_name = self.labels.get("patcher/systemd-name", self.name)
 
-        self.systemd_name = self.name
-        if "patcher/systemd-name" in attrs["Config"]["Labels"]:
-            self.systemd_name = attrs["Config"]["Labels"]["patcher/systemd-name"]
-
-        # the actual repo image digest is buried inside an image reference that we have to
-        # dig out from the running container image
         repo_image = client.images.get(self.image_sha256)
         self.repo_image_sha256 = repo_image.attrs["RepoDigests"][0].split("@")[1]
 
