@@ -1,29 +1,30 @@
 import docker
-import subprocess
+from docker.models.containers import Container
+import concurrent.futures
 import logging
+import os
 
 
 client = docker.from_env()
 
 IMAGE_CACHE = {}
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(levelno)s:%(name)s:%(threadName)s:%(message)s")
 LOGGER = logging.getLogger(__name__)
 
+THREAD_POOL_SIZE = int(os.getenv("THREAD_POOL_SIZE", "3"))
 
-class Container(object):
 
-    def __init__(self, attrs):
-        self.name = attrs["Name"].lstrip("/")
-        self.image_sha256 = attrs["Image"]
-        self.image = attrs["Config"]["Image"]
-        self.labels = attrs["Config"]["Labels"]
+class ContainerUpdate(object):
 
+    def __init__(self, container: Container):
+        self.container = container
+        self.name = container.attrs["Name"].lstrip("/")
+        self.image = container.attrs["Config"]["Image"]
+        self.labels = container.attrs["Config"]["Labels"]
         self.auto_update_enabled = self.labels.get("patcher/auto-update", "false").lower() == "true"
-        self.systemd_name = self.labels.get("patcher/systemd-name", self.name)
-
-        repo_image = client.images.get(self.image_sha256)
-        self.repo_image_sha256 = repo_image.attrs["RepoDigests"][0].split("@")[1]
+        self.container_stop_timeout = int(self.labels.get("patcher/stop-timeout", "30"))
+        self.repo_image_sha256 = container.image.attrs["RepoDigests"][0].split("@")[1]
 
     def should_update(self):
         if not self.auto_update_enabled:
@@ -36,28 +37,34 @@ class Container(object):
         return IMAGE_CACHE[self.image] != self.repo_image_sha256
 
     def restart(self):
-        p = subprocess.Popen(['systemctl', 'restart', self.systemd_name], stderr=subprocess.PIPE,
-                             stdout=subprocess.PIPE, shell=False)
-        output = p.communicate()
-        if p.returncode != 0:
-            LOGGER.error("Failed to restart {0}, output from systemd: {1}".format(self.systemd_name, output[1]))
+        self.container.stop(timeout=self.container_stop_timeout)
 
     def __repr__(self):
-        return "<Container (name={0}, image_sha256={1}, image={2}, repo_image_sha256={3}, auto_update_enabled={4}, systemd_name={5})>".\
-            format(self.name, self.image_sha256, self.image, self.repo_image_sha256, self.auto_update_enabled, self.systemd_name)
+        return (f"<ContainerUpdate (name={self.name}, image={self.image}, repo_image_sha256={self.repo_image_sha256}, "
+                f"auto_update_enabled={self.auto_update_enabled})>")
 
 
 def get_containers():
     rv = client.containers.list(all=False)
-    return [Container(x.attrs) for x in rv]
+    return [ContainerUpdate(x) for x in rv]
+
+
+def handle_container_update(cu: ContainerUpdate):
+    try:
+        LOGGER.info(f"Evaluating {cu}")
+        if cu.should_update():
+            LOGGER.info(f"Restarting {cu}")
+            cu.restart()
+    except Exception as e:
+        LOGGER.exception(f"Error occurred for {cu}")
 
 
 if __name__ == '__main__':
-    for container in get_containers():
-        try:
-            LOGGER.info("Acting on {0}".format(container))
-            if container.should_update():
-                LOGGER.info("Restarting {0}".format(container))
-                container.restart()
-        except Exception as e:
-            LOGGER.exception("Error occurred for {0}".format(container))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=THREAD_POOL_SIZE) as executor:
+        cus = get_containers()
+        future_to_handle = {executor.submit(handle_container_update, cu): cu for cu in cus}
+        for future in concurrent.futures.as_completed(future_to_handle):
+            try:
+                future.result()
+            except Exception as exc:
+                LOGGER.exception("Error occurred")

@@ -2,12 +2,12 @@
 
 [![Docker Automated build](https://img.shields.io/docker/automated/jlyheden/docker-patcher-systemd.svg)](https://hub.docker.com/r/jlyheden/docker-patcher-systemd/builds/)
 
-A Python script that connects to the docker daemon to see if there's any running containers where the image tag has been updated and if so triggers a systemd restart of the relevant containers. Works fine for non-critical setups like keeping your home server or hobby projects up to date but if you need something more advanced you should probably check out [watchtower](https://github.com/containrrr/watchtower)
+A Python script that connects to the docker daemon to see if there's any running containers where the image tag has been updated and if so stops the container, relying on systemd to start it up again. Works fine for non-critical setups like keeping your home server or hobby projects up to date but if you need something more advanced you should probably check out [watchtower](https://github.com/containrrr/watchtower)
 
-The script assumes that the container lifecycle is handled by systemd, for example running an nginx container like this:
+The script assumes that the container lifecycle is handled by systemd, for example running a nginx container like this:
 
-```
-$ cat /etc/systemd/system/docker.nginx.service
+```ini
+# /etc/systemd/system/docker.nginx.service
 [Unit]
 Description=Nginx reverse proxy container
 
@@ -22,16 +22,17 @@ ExecStart=/usr/bin/docker run \
   -p 80:80 \
   -p 443:443 \
   --label "patcher/auto-update=true" \
+  --label "patcher/stop-timeout=30" \
   nginx:mainline-alpine
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-And then, to run the patcher script on a cron schedule (below works on Debian 10):
+And then, to run the patcher script on a cron schedule (below works on Debian 12). Max parallel updates configured via `THREAD_POOL_SIZE` env var.
 
-```
-$ cat /etc/systemd/system/docker.patcher.service
+```ini
+# /etc/systemd/system/docker.patcher.service
 [Unit]
 Description=Patches selected systemd docker containers
 Requires=docker.patcher.service
@@ -42,14 +43,11 @@ ExecStartPre=/usr/bin/docker pull jlyheden/docker-patcher-systemd:latest
 ExecStart=/usr/bin/docker run \
   --rm \
   --name %n \
-  -v /bin/systemctl:/bin/systemctl \
-  -v /run/systemd/system:/run/systemd/system \
-  -v /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket \
-  -v /sys/fs/cgroup:/sys/fs/cgroup \
+  -e THREAD_POOL_SIZE=3 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   jlyheden/docker-patcher-systemd:latest
 
-$ cat /etc/systemd/system/docker.patcher.timer
+# /etc/systemd/system/docker.patcher.timer
 [Unit]
 Description=Timer for docker.patcher.service
 
@@ -60,6 +58,4 @@ OnCalendar=Mon *-*-* 5:00:00
 WantedBy=timers.target
 ```
 
-For all the containers that you want to be auto updated you must add a label `patcher/auto-update=true`. Default behavior is to ignore the container if the label is not set.
-
-The script will assume that the container name matches the systemd service name but this can be overridden by setting the label `patcher/systemd-name=some-name`
+For all the containers that you want to be auto updated you must add a label `patcher/auto-update=true` or the patcher will ignore the container. You can tweak by container how many seconds the graceful shutdown will wait via `patcher/stop-timeout=N`. Default is `30` seconds.
