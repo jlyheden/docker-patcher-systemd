@@ -9,7 +9,7 @@ client = docker.from_env()
 
 IMAGE_CACHE = {}
 
-logging.basicConfig(level=logging.INFO, format="%(levelno)s:%(name)s:%(threadName)s:%(message)s")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(threadName)s:%(message)s")
 LOGGER = logging.getLogger(__name__)
 
 THREAD_POOL_SIZE = int(os.getenv("THREAD_POOL_SIZE", "3"))
@@ -55,6 +55,8 @@ def handle_container_update(cu: ContainerUpdate):
         if cu.should_update():
             LOGGER.info(f"Restarting {cu}")
             cu.restart()
+        else:
+            LOGGER.info(f"Ignoring update of {cu}")
     except Exception as e:
         LOGGER.exception(f"Error occurred for {cu}")
 
