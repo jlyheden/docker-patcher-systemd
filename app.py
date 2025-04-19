@@ -21,8 +21,14 @@ class ContainerUpdate(object):
         self.container = container
         self.name = container.attrs["Name"].lstrip("/")
         self.image = container.attrs["Config"]["Image"]
+        if ":" in self.image:
+            self.repository, self.tag = self.image.split(":")
+        else:
+            self.repository = self.image
+            self.tag = None
         self.labels = container.attrs["Config"]["Labels"]
         self.auto_update_enabled = self.labels.get("patcher/auto-update", "false").lower() == "true"
+        self.should_pull = self.labels.get("patcher/auto-pull", "false").lower() == "true"
         self.container_stop_timeout = int(self.labels.get("patcher/stop-timeout", "30"))
         self.repo_image_sha256 = container.image.attrs["RepoDigests"][0].split("@")[1]
 
@@ -35,6 +41,9 @@ class ContainerUpdate(object):
             d.reload()
             IMAGE_CACHE[self.image] = d.attrs["Descriptor"]["digest"]
         return IMAGE_CACHE[self.image] != self.repo_image_sha256
+
+    def pull(self):
+        client.images.pull(self.repository, tag=self.tag)
 
     def restart(self):
         self.container.stop(timeout=self.container_stop_timeout)
@@ -53,6 +62,9 @@ def handle_container_update(cu: ContainerUpdate):
     try:
         LOGGER.info(f"Evaluating {cu}")
         if cu.should_update():
+            if cu.should_pull:
+                LOGGER.info(f"Pulling image {cu}")
+                cu.pull()
             LOGGER.info(f"Restarting {cu}")
             cu.restart()
         else:
