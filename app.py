@@ -1,9 +1,10 @@
 import docker
+import docker.errors
 from docker.models.containers import Container
 import concurrent.futures
 import logging
 import os
-
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 client = docker.from_env()
 
@@ -13,6 +14,10 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(threadN
 LOGGER = logging.getLogger(__name__)
 
 THREAD_POOL_SIZE = int(os.getenv("THREAD_POOL_SIZE", "3"))
+
+
+class DockerRetryException(Exception):
+    pass
 
 
 class ContainerUpdate(object):
@@ -58,6 +63,9 @@ def get_containers():
     return [ContainerUpdate(x) for x in rv]
 
 
+@retry(retry=retry_if_exception_type(DockerRetryException),
+       wait=wait_exponential(multiplier=1, min=10, max=600),
+       stop=stop_after_attempt(50))
 def handle_container_update(cu: ContainerUpdate):
     try:
         LOGGER.info(f"Evaluating {cu}")
@@ -69,6 +77,11 @@ def handle_container_update(cu: ContainerUpdate):
             cu.restart()
         else:
             LOGGER.info(f"Ignoring update of {cu}")
+    except docker.errors.APIError as e:
+        if "retry-after" in e.response.headers:
+            raise DockerRetryException(e)
+        else:
+            LOGGER.exception(f"Docker API error occurred that was not due to rate limit: {e}, Response: {e.response}, Response reason: {e.response.reason}, Response headers: {e.response.headers}")
     except Exception as e:
         LOGGER.exception(f"Error occurred for {cu}")
 
