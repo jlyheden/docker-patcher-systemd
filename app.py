@@ -78,7 +78,11 @@ def handle_container_update(cu: ContainerUpdate):
         else:
             LOGGER.info(f"Ignoring update of {cu}")
     except docker.errors.APIError as e:
-        if "retry-after" in e.response.headers:
+        if e.response.status_code == 429:
+            LOGGER.info(f"Got rate limited for {cu}")
+            raise DockerRetryException(e)
+        elif e.response.status_code == 500:
+            LOGGER.info(f"Got http 500 for {cu}")
             raise DockerRetryException(e)
         else:
             LOGGER.exception(f"Docker API error occurred that was not due to rate limit: {e}, Response: {e.response}, Response reason: {e.response.reason}, Response headers: {e.response.headers}")
