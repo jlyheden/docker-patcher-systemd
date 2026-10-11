@@ -4,9 +4,13 @@ from docker.models.containers import Container
 import concurrent.futures
 import logging
 import os
+import subprocess
+from contextvars import ContextVar
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 client = docker.from_env()
+
+state = ContextVar("state", default=0)
 
 IMAGE_CACHE = {}
 
@@ -67,6 +71,7 @@ def get_containers():
        wait=wait_exponential(multiplier=1, min=10, max=600),
        stop=stop_after_attempt(50))
 def handle_container_update(cu: ContainerUpdate):
+    attempt_state = state.get()
     try:
         LOGGER.info(f"Evaluating {cu}")
         if cu.should_update():
@@ -84,16 +89,33 @@ def handle_container_update(cu: ContainerUpdate):
         elif e.response.status_code == 500:
             LOGGER.info(f"Got http 500 for {cu}")
             raise DockerRetryException(e)
+        elif e.response.status_code == 404:
+            if not attempt_state == "shellpulled":
+                # https://github.com/docker/docker-py/issues/2101
+                LOGGER.info(f"Got 404 but it might be due to buggy py-docker, retrying with shell docker pull for {cu}")
+                subprocess.call(["docker", "pull", f"{cu.repository}:{cu.tag}"])
+                state.set("shellpulled")
+                raise DockerRetryException(e)
+            else:
+                raise
         else:
             LOGGER.exception(f"Docker API error occurred that was not due to rate limit: {e}, Response: {e.response}, Response reason: {e.response.reason}, Response headers: {e.response.headers}")
     except Exception as e:
         LOGGER.exception(f"Error occurred for {cu}")
 
 
+def run_task(cu: ContainerUpdate):
+    token = state.set(0)  # Initialize state for this task
+    try:
+        return handle_container_update(cu)
+    finally:
+        state.reset(token)  # Restore previous context
+
+
 if __name__ == '__main__':
     with concurrent.futures.ThreadPoolExecutor(max_workers=THREAD_POOL_SIZE) as executor:
         cus = get_containers()
-        future_to_handle = {executor.submit(handle_container_update, cu): cu for cu in cus}
+        future_to_handle = {executor.submit(run_task, cu): cu for cu in cus}
         for future in concurrent.futures.as_completed(future_to_handle):
             try:
                 future.result()
